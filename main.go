@@ -2,10 +2,12 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"github.com/gorilla/mux"
 	_ "github.com/mattn/go-sqlite3"
+	"log"
 	"net/http"
 	"net/http/fcgi"
 	"os"
@@ -111,10 +113,67 @@ func NotFound(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+type Feature struct {
+	Type       string `json:"type"`
+	Properties struct {
+		Time string
+	} `json:"properties"`
+	Geometry struct {
+		Type        string    `json:"type"`
+		Coordinates []float64 `json:"coordinates"`
+	} `json:"geometry"`
+}
+
+type FeatureCollection struct {
+	Type     string    `json:"type"`
+	Features []Feature `json:"features"`
+}
+
+func GetAllPoints(w http.ResponseWriter, r *http.Request) {
+	var fc FeatureCollection
+	fc.Type = "FeatureCollection"
+	rows, err := db.Query("SELECT * FROM positions")
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+	}
+	var lat, lon, alt, hdop, speed float64
+	var ts time.Time
+	var name string
+	for rows.Next() {
+		if err := rows.Scan(&ts, &name, &lat, &lon, &alt, &speed, &hdop); err != nil {
+			log.Fatal(err)
+		}
+		var f Feature
+		f.Type = "Feature"
+		f.Properties.Time = ts.String()
+		f.Geometry.Type = "Point"
+		f.Geometry.Coordinates = make([]float64, 2)
+		f.Geometry.Coordinates[0] = lon
+		f.Geometry.Coordinates[1] = lat
+		fc.Features = append(fc.Features, f)
+
+	}
+	if err := rows.Err(); err != nil {
+		http.Error(w, err.Error(), 500)
+	}
+	b, err := json.MarshalIndent(fc, "", "\t")
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+	}
+	w.Write(b)
+}
+
+func serveRoot(w http.ResponseWriter, r *http.Request) {
+	http.ServeFile(w, r, "static/index.html")
+}
+
 func main() {
 	flag.Parse()
 	r := mux.NewRouter()
 	r.Path("/insert").HandlerFunc(NewPositionOsmand)
+	r.Path("/points").HandlerFunc(GetAllPoints)
+	r.PathPrefix("/static").Handler(http.FileServer(http.Dir(".")))
+	r.HandleFunc("/", serveRoot)
 	r.NotFoundHandler = http.HandlerFunc(NotFound)
 	var err error
 	if *localPort != 0 {
