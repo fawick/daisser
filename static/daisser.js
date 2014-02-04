@@ -38,7 +38,7 @@ function DaisserController($scope, $timeout, $http) {
 
 	$scope.pointsLayer.addTo($scope.map)
 	$scope.fetch();
-	L.control.layers(baseLayers, null).addTo($scope.map);
+	L.control.layers(baseLayers, {"fabian":$scope.pointsLayer}).addTo($scope.map);
 	L.control.scale().addTo($scope.map)
 }
 

@@ -169,7 +169,8 @@ func serveRoot(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	flag.Parse()
-	r := mux.NewRouter()
+	rbase := mux.NewRouter()
+	r := rbase.PathPrefix("/").Subrouter()
 	r.Path("/insert").HandlerFunc(NewPositionOsmand)
 	r.Path("/points").HandlerFunc(GetAllPoints)
 	r.PathPrefix("/static").Handler(http.FileServer(http.Dir(".")))
