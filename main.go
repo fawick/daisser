@@ -115,9 +115,7 @@ func NotFound(w http.ResponseWriter, r *http.Request) {
 
 type Feature struct {
 	Type       string `json:"type"`
-	Properties struct {
-		Time string
-	} `json:"properties"`
+	Properties map[string]string `json:"properties"`
 	Geometry struct {
 		Type        string    `json:"type"`
 		Coordinates []float64 `json:"coordinates"`
@@ -145,7 +143,10 @@ func GetAllPoints(w http.ResponseWriter, r *http.Request) {
 		}
 		var f Feature
 		f.Type = "Feature"
-		f.Properties.Time = ts.String()
+                f.Properties = make(map[string]string)
+		f.Properties["Time"] = ts.String()
+		f.Properties["User"] = name
+                f.Properties["Hdop"] = fmt.Sprint(hdop)
 		f.Geometry.Type = "Point"
 		f.Geometry.Coordinates = make([]float64, 2)
 		f.Geometry.Coordinates[0] = lon
@@ -156,7 +157,7 @@ func GetAllPoints(w http.ResponseWriter, r *http.Request) {
 	if err := rows.Err(); err != nil {
 		http.Error(w, err.Error(), 500)
 	}
-	b, err := json.MarshalIndent(fc, "", "\t")
+	b, err := json.Marshal(fc)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 	}
@@ -164,16 +165,17 @@ func GetAllPoints(w http.ResponseWriter, r *http.Request) {
 }
 
 func serveRoot(w http.ResponseWriter, r *http.Request) {
-	http.ServeFile(w, r, "static/index.html")
+	http.ServeFile(w, r, "static/signin.html")
 }
 
 func main() {
+	base := "/daisser"
 	flag.Parse()
 	rbase := mux.NewRouter()
-	r := rbase.PathPrefix("/").Subrouter()
+	r := rbase.PathPrefix(base).Subrouter()
 	r.Path("/insert").HandlerFunc(NewPositionOsmand)
 	r.Path("/points").HandlerFunc(GetAllPoints)
-	r.PathPrefix("/static").Handler(http.FileServer(http.Dir(".")))
+	r.PathPrefix("/static").Handler(http.StripPrefix(base, http.FileServer(http.Dir("."))))
 	r.HandleFunc("/", serveRoot)
 	r.NotFoundHandler = http.HandlerFunc(NotFound)
 	var err error

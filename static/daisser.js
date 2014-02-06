@@ -22,7 +22,7 @@ function DaisserController($scope, $timeout, $http) {
 		}),
 		pointsLayer: L.geoJson(),
 		fetch: function() {
-			$http.get('/points')
+			$http.get('./points')
 			.success(function(points) 
 			{
 				$scope.pointsLayer.addData(points);
