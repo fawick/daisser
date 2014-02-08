@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"github.com/gorilla/mux"
 	_ "github.com/mattn/go-sqlite3"
+	"io"
 	"log"
 	"net/http"
 	"net/http/fcgi"
@@ -59,12 +60,20 @@ func readConfig() error {
 
 var db *sql.DB
 var startTime time.Time
+var logWriter io.Writer
 
 var localPortFlag = flag.Int("local", 0, "Listen on local port instead of using FastCGI")
 
 func init() {
-	err := readConfig()
+	l, err := os.Create("daisser.log")
 	if err != nil {
+		panic(err)
+	}
+	logWriter = l
+
+	err = readConfig()
+	if err != nil {
+		fmt.Fprintln(logWriter, err)
 		panic(err)
 	}
 	flag.Parse()
@@ -76,6 +85,7 @@ func init() {
 	startTime = time.Now()
 	db, err = sql.Open("sqlite3", config.DbFile)
 	if err != nil {
+		fmt.Fprintln(logWriter, err)
 		panic(err)
 	}
 	queries := []string{
@@ -85,6 +95,7 @@ func init() {
 	for _, query := range queries {
 		_, err = db.Exec(query)
 		if err != nil {
+			fmt.Fprintln(logWriter, err)
 			panic(err)
 		}
 	}
@@ -219,8 +230,6 @@ func serveRoot(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	s, _ := os.Getwd()
-	log.Println(s)
 	var base, r *mux.Router
 	if config.UrlBase != "" {
 		base = mux.NewRouter()
@@ -242,6 +251,6 @@ func main() {
 		err = fcgi.Serve(nil, base)
 	}
 	if err != nil {
-		fmt.Println(err)
+		fmt.Fprintln(logWriter, err)
 	}
 }
