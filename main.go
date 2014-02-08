@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"flag"
@@ -15,16 +16,67 @@ import (
 	"time"
 )
 
+const configFile = "config.json"
+
+var config struct {
+	UrlBase   string
+	DbFile    string
+	LocalMode bool
+	LocalPort int
+}
+
+func writeConfig() error {
+	j, err := json.MarshalIndent(&config, "", "\t")
+	if err != nil {
+		return err
+	}
+	outFile, err := os.Create(configFile)
+	b := bytes.NewBuffer(j)
+	if _, err := b.WriteTo(outFile); err != nil {
+		return err
+	}
+	return nil
+}
+
+func readConfig() error {
+	config.UrlBase = ""
+	config.DbFile = "positions.db"
+	config.LocalMode = false
+	config.LocalPort = 8080
+	inFile, err := os.Open(configFile)
+	if err != nil {
+		return writeConfig()
+	}
+	dec := json.NewDecoder(inFile)
+	err = dec.Decode(&config)
+	if err != nil {
+		return err
+	}
+	// add backwards-compatible defaults for new config file entries when
+	// reading the config
+	return writeConfig()
+}
+
 var db *sql.DB
 var startTime time.Time
 
+var localPortFlag = flag.Int("local", 0, "Listen on local port instead of using FastCGI")
+
 func init() {
-	startTime = time.Now()
-	var err error
-	db, err = sql.Open("sqlite3", "positions.db")
+	err := readConfig()
 	if err != nil {
-		fmt.Println("Error opening db: ", err)
-		panic("init")
+		panic(err)
+	}
+	flag.Parse()
+	if *localPortFlag != 0 {
+		config.LocalMode = true
+		config.LocalPort = *localPortFlag
+	}
+
+	startTime = time.Now()
+	db, err = sql.Open("sqlite3", config.DbFile)
+	if err != nil {
+		panic(err)
 	}
 	queries := []string{
 		"PRAGMA journal_mode = OFF",
@@ -33,8 +85,7 @@ func init() {
 	for _, query := range queries {
 		_, err = db.Exec(query)
 		if err != nil {
-			fmt.Println("Error setting up db: ", err)
-			panic("init")
+			panic(err)
 		}
 	}
 }
@@ -94,9 +145,8 @@ func NewPositionOsmand(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "ok")
 }
 
-var localPort = flag.Int("local", 0, "Listen on local port instead of using FastCGI")
-
 func NotFound(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(404)
 	fmt.Fprintln(w, "404 for ", r)
 	fmt.Fprintln(w, "Environment:", os.Environ())
 	fmt.Fprintln(w, "Arguments:", os.Args)
@@ -114,9 +164,9 @@ func NotFound(w http.ResponseWriter, r *http.Request) {
 }
 
 type Feature struct {
-	Type       string `json:"type"`
+	Type       string            `json:"type"`
 	Properties map[string]string `json:"properties"`
-	Geometry struct {
+	Geometry   struct {
 		Type        string    `json:"type"`
 		Coordinates []float64 `json:"coordinates"`
 	} `json:"geometry"`
@@ -143,10 +193,10 @@ func GetAllPoints(w http.ResponseWriter, r *http.Request) {
 		}
 		var f Feature
 		f.Type = "Feature"
-                f.Properties = make(map[string]string)
+		f.Properties = make(map[string]string)
 		f.Properties["Time"] = ts.String()
 		f.Properties["User"] = name
-                f.Properties["Hdop"] = fmt.Sprint(hdop)
+		f.Properties["Hdop"] = fmt.Sprint(hdop)
 		f.Geometry.Type = "Point"
 		f.Geometry.Coordinates = make([]float64, 2)
 		f.Geometry.Coordinates[0] = lon
@@ -169,21 +219,27 @@ func serveRoot(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	base := "/daisser"
-	flag.Parse()
-	rbase := mux.NewRouter()
-	r := rbase.PathPrefix(base).Subrouter()
+	s, _ := os.Getwd()
+	log.Println(s)
+	var base, r *mux.Router
+	if config.UrlBase != "" {
+		base = mux.NewRouter()
+		r = base.PathPrefix(config.UrlBase).Subrouter()
+	} else {
+		r = mux.NewRouter()
+		base = r
+	}
 	r.Path("/insert").HandlerFunc(NewPositionOsmand)
 	r.Path("/points").HandlerFunc(GetAllPoints)
-	r.PathPrefix("/static").Handler(http.StripPrefix(base, http.FileServer(http.Dir("."))))
+	r.PathPrefix("/static").Handler(http.StripPrefix(config.UrlBase, http.FileServer(http.Dir("."))))
 	r.HandleFunc("/", serveRoot)
-	r.NotFoundHandler = http.HandlerFunc(NotFound)
+	base.NotFoundHandler = http.HandlerFunc(NotFound)
 	var err error
-	if *localPort != 0 {
-		s := fmt.Sprintf(":%d", *localPort)
-		err = http.ListenAndServe(s, r)
+	if config.LocalMode {
+		s := fmt.Sprintf(":%d", config.LocalPort)
+		err = http.ListenAndServe(s, base)
 	} else {
-		err = fcgi.Serve(nil, r)
+		err = fcgi.Serve(nil, base)
 	}
 	if err != nil {
 		fmt.Println(err)
