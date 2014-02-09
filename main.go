@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/gorilla/mux"
+	"github.com/gorilla/sessions"
 	_ "github.com/mattn/go-sqlite3"
 	"io"
 	"log"
@@ -38,6 +39,8 @@ func writeConfig() error {
 	}
 	return nil
 }
+
+var store sessions.Store
 
 func readConfig() error {
 	config.UrlBase = ""
@@ -99,6 +102,8 @@ func init() {
 			panic(err)
 		}
 	}
+
+	store = sessions.NewCookieStore([]byte("keykeykey"))
 }
 
 func NewPositionOsmand(w http.ResponseWriter, r *http.Request) {
@@ -159,8 +164,6 @@ func NewPositionOsmand(w http.ResponseWriter, r *http.Request) {
 func NotFound(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(404)
 	fmt.Fprintln(w, "404 for ", r)
-	fmt.Fprintln(w, "Environment:", os.Environ())
-	fmt.Fprintln(w, "Arguments:", os.Args)
 	fmt.Fprintln(w, "Started at", startTime.String(), "\t Running for", time.Since(startTime))
 	pwd, _ := os.Getwd()
 	fmt.Fprintln(w, "cwd: ", pwd)
@@ -226,22 +229,79 @@ func GetAllPoints(w http.ResponseWriter, r *http.Request) {
 }
 
 func serveRoot(w http.ResponseWriter, r *http.Request) {
+	sess, err := store.Get(r, "daissersession")
+	fmt.Println("sess=", sess)
+	if err != nil {
+		http.Error(w, "Server Error", 500)
+	}
+	sess.Save(r, w)
 	http.ServeFile(w, r, "static/signin.html")
 }
 
-func main() {
-	var base, r *mux.Router
-	if config.UrlBase != "" {
-		base = mux.NewRouter()
-		r = base.PathPrefix(config.UrlBase).Subrouter()
-	} else {
-		r = mux.NewRouter()
-		base = r
+func postLogin(w http.ResponseWriter, r *http.Request) {
+	sess, err := store.Get(r, "daissersession")
+	if err != nil {
+		http.Error(w, "Server Error", 500)
 	}
+	err = r.ParseForm()
+	if err != nil {
+		http.Error(w, "Bad login request", 400)
+	}
+	log.Println(r.Form)
+	if r.FormValue("user") == "test" && r.FormValue("password") == "test" {
+		sess, err := store.New(r, "daissersession")
+		if err != nil {
+			http.Error(w, "Server Error", 500)
+		}
+		sess.Values["user"] = "fabian"
+		sess.Save(r, w)
+		http.Redirect(w, r, config.UrlBase+"/static/bootleaf.html", 302)
+	} else {
+		sess.AddFlash("Invalid username/password")
+		http.Redirect(w, r, config.UrlBase+"/", 302)
+	}
+}
+
+func postLogout(w http.ResponseWriter, r *http.Request) {
+	sess, err := store.Get(r, "daissersession")
+	if err != nil {
+		http.Error(w, "Server Error", 500)
+	}
+	delete(sess.Values, "user")
+	sess.Values["user"] = nil
+	http.Redirect(w, r, config.UrlBase+"/", 302)
+}
+
+func authCheck(exe func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
+	f := func(w http.ResponseWriter, r *http.Request) {
+		sess, err := store.Get(r, "daissersession")
+		if err != nil {
+			http.Error(w, "Server Error", 500)
+		}
+
+		if _, ok := sess.Values["user"]; !ok {
+			http.Redirect(w, r, config.UrlBase+"/", 302)
+			return
+		}
+		exe(w, r)
+	}
+	return f
+}
+
+func main() {
+	var r *mux.Router
+	base := mux.NewRouter()
+	if config.UrlBase == "" {
+		r = base
+	} else {
+		r = base.PathPrefix(config.UrlBase).Subrouter()
+	}
+	r.Path("/").HandlerFunc(serveRoot)
+	r.Path("/api/login").Methods("POST").HandlerFunc(postLogin)
+	r.Path("/api/logout").Methods("POST").HandlerFunc(postLogout)
 	r.Path("/insert").HandlerFunc(NewPositionOsmand)
 	r.Path("/points").HandlerFunc(GetAllPoints)
-	r.PathPrefix("/static").Handler(http.StripPrefix(config.UrlBase, http.FileServer(http.Dir("."))))
-	r.HandleFunc("/", serveRoot)
+	r.PathPrefix("/static").Handler(http.StripPrefix(config.UrlBase+"/static", http.FileServer(http.Dir("./static"))))
 	base.NotFoundHandler = http.HandlerFunc(NotFound)
 	var err error
 	if config.LocalMode {
