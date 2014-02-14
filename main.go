@@ -216,7 +216,6 @@ func GetAllPoints(w http.ResponseWriter, r *http.Request) {
 		f.Geometry.Coordinates[0] = lon
 		f.Geometry.Coordinates[1] = lat
 		fc.Features = append(fc.Features, f)
-
 	}
 	if err := rows.Err(); err != nil {
 		http.Error(w, err.Error(), 500)
@@ -229,13 +228,11 @@ func GetAllPoints(w http.ResponseWriter, r *http.Request) {
 }
 
 func serveRoot(w http.ResponseWriter, r *http.Request) {
-	sess, err := store.Get(r, "daissersession")
-	fmt.Println("sess=", sess)
-	if err != nil {
-		http.Error(w, "Server Error", 500)
-	}
-	sess.Save(r, w)
 	http.ServeFile(w, r, "static/signin.html")
+}
+
+func serveMap(w http.ResponseWriter, r *http.Request) {
+	http.ServeFile(w, r, "static/bootleaf.html")
 }
 
 func postLogin(w http.ResponseWriter, r *http.Request) {
@@ -255,7 +252,7 @@ func postLogin(w http.ResponseWriter, r *http.Request) {
 		}
 		sess.Values["user"] = "fabian"
 		sess.Save(r, w)
-		http.Redirect(w, r, config.UrlBase+"/static/bootleaf.html", 302)
+		http.Redirect(w, r, config.UrlBase+"/map", 302)
 	} else {
 		sess.AddFlash("Invalid username/password")
 		http.Redirect(w, r, config.UrlBase+"/", 302)
@@ -267,18 +264,19 @@ func postLogout(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "Server Error", 500)
 	}
+	log.Println("Logging out", sess.Values["user"])
 	delete(sess.Values, "user")
-	sess.Values["user"] = nil
+	sess.Save(r, w)
 	http.Redirect(w, r, config.UrlBase+"/", 302)
 }
 
-func authCheck(exe func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
+func authCheck(exe func(http.ResponseWriter, *http.Request)) http.HandlerFunc {
 	f := func(w http.ResponseWriter, r *http.Request) {
 		sess, err := store.Get(r, "daissersession")
 		if err != nil {
 			http.Error(w, "Server Error", 500)
 		}
-
+		fmt.Println(sess)
 		if _, ok := sess.Values["user"]; !ok {
 			http.Redirect(w, r, config.UrlBase+"/", 302)
 			return
@@ -296,13 +294,19 @@ func main() {
 	} else {
 		r = base.PathPrefix(config.UrlBase).Subrouter()
 	}
+
+	// default access
 	r.Path("/").HandlerFunc(serveRoot)
 	r.Path("/api/login").Methods("POST").HandlerFunc(postLogin)
-	r.Path("/api/logout").Methods("POST").HandlerFunc(postLogout)
-	r.Path("/insert").HandlerFunc(NewPositionOsmand)
-	r.Path("/points").HandlerFunc(GetAllPoints)
-	r.PathPrefix("/static").Handler(http.StripPrefix(config.UrlBase+"/static", http.FileServer(http.Dir("./static"))))
+	r.Path("/api/insertOsmand").HandlerFunc(NewPositionOsmand)
+	r.PathPrefix("/static/default/").Handler(http.StripPrefix(config.UrlBase+"/static/default/", http.FileServer(http.Dir("static/default"))))
+
+	r.Path("/map").HandlerFunc(authCheck(serveMap))
+	r.Path("/api/logout").HandlerFunc(authCheck(postLogout))
+	r.Path("/api/points").HandlerFunc(authCheck(GetAllPoints))
+
 	base.NotFoundHandler = http.HandlerFunc(NotFound)
+
 	var err error
 	if config.LocalMode {
 		s := fmt.Sprintf(":%d", config.LocalPort)
@@ -313,4 +317,6 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(logWriter, err)
 	}
+
+	fmt.Println("that's all folks")
 }

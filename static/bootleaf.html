@@ -302,7 +302,7 @@
 			logout = function() {
 				var r = confirm('Do you really want to log out?');
     				if (r) {
-			    	    window.location.href = '../';
+			    	    window.location.href = 'api/logout';
 				}
 			}
 
@@ -422,7 +422,7 @@
                     }
                 }
             });
-            $.getJSON("../points", function (data) {
+            $.getJSON("api/points", function (data) {
                 fabian.addData(data);
             });
 
