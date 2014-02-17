@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"code.google.com/p/go.crypto/bcrypt"
 	"database/sql"
 	"encoding/json"
 	"flag"
@@ -93,6 +94,7 @@ func init() {
 	}
 	queries := []string{
 		"PRAGMA journal_mode = OFF",
+		"CREATE TABLE IF NOT EXISTS credentials(user TEXT PRIMARY KEY NOT NULL, password TEXT NOT NULL)",
 		"CREATE TABLE IF NOT EXISTS positions(ts DATETIME DEFAULT CURRENT_TIMESTAMP, person TEXT, lat REAL, lon REAL, alt REAL, speed REAL, hdop REAL)",
 	}
 	for _, query := range queries {
@@ -227,7 +229,7 @@ func GetAllPoints(w http.ResponseWriter, r *http.Request) {
 	w.Write(b)
 }
 
-func serveRoot(w http.ResponseWriter, r *http.Request) {
+func serveLogin(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, "static/signin.html")
 }
 
@@ -239,22 +241,41 @@ func postLogin(w http.ResponseWriter, r *http.Request) {
 	sess, err := store.Get(r, "daissersession")
 	if err != nil {
 		http.Error(w, "Server Error", 500)
+		return
 	}
 	err = r.ParseForm()
 	if err != nil {
 		http.Error(w, "Bad login request", 400)
+		return
 	}
-	log.Println(r.Form)
-	if r.FormValue("user") == "test" && r.FormValue("password") == "test" {
+	username := r.FormValue("username")
+	password := r.FormValue("password")
+	var encryptedPassword string
+
+	err = db.QueryRow("SELECT password FROM credentials WHERE username=?", username).Scan(&encryptedPassword)
+	log.Println(err)
+
+	if err != nil && err != sql.ErrNoRows {
+		http.Error(w, "Server Error: "+err.Error(), 500)
+		return
+	}
+
+	log.Println(encryptedPassword, password)
+
+	err = bcrypt.CompareHashAndPassword([]byte(encryptedPassword), []byte(password))
+	if err == nil {
 		sess, err := store.New(r, "daissersession")
 		if err != nil {
 			http.Error(w, "Server Error", 500)
 		}
-		sess.Values["user"] = "fabian"
+		sess.Values["user"] = username
 		sess.Save(r, w)
 		http.Redirect(w, r, config.UrlBase+"/map", 302)
 	} else {
+		log.Println(err)
+		delete(sess.Values, "user")
 		sess.AddFlash("Invalid username/password")
+		sess.Save(r, w)
 		http.Redirect(w, r, config.UrlBase+"/", 302)
 	}
 }
@@ -277,13 +298,26 @@ func authCheck(exe func(http.ResponseWriter, *http.Request)) http.HandlerFunc {
 			http.Error(w, "Server Error", 500)
 		}
 		fmt.Println(sess)
-		if _, ok := sess.Values["user"]; !ok {
+		if _, ok := sess.Values["user"]; !ok { // TODO handle case that user is not in DB
 			http.Redirect(w, r, config.UrlBase+"/", 302)
 			return
 		}
 		exe(w, r)
 	}
 	return f
+}
+
+func setPassword(username, password string) {
+	hpass, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		panic(err) //this is a panic because bcrypt errors on invalid costs
+	}
+	log.Println(string(hpass))
+
+	if _, err = db.Exec("REPLACE INTO credentials VALUES(?,?)", username, string(hpass)); err != nil {
+		log.Println("error during insert", err)
+		return
+	}
 }
 
 func main() {
@@ -296,7 +330,7 @@ func main() {
 	}
 
 	// default access
-	r.Path("/").HandlerFunc(serveRoot)
+	r.Path("/").HandlerFunc(serveLogin)
 	r.Path("/api/login").Methods("POST").HandlerFunc(postLogin)
 	r.Path("/api/insertOsmand").HandlerFunc(NewPositionOsmand)
 	r.PathPrefix("/static/default/").Handler(http.StripPrefix(config.UrlBase+"/static/default/", http.FileServer(http.Dir("static/default"))))
