@@ -2,36 +2,6 @@
 	"version": 0,
 	"dependencies": [
 		{
-			"importpath": "github.com/gorilla/context",
-			"repository": "https://github.com/gorilla/context",
-			"revision": "1c83b3eabd45b6d76072b66b746c20815fb2872d",
-			"branch": "master"
-		},
-		{
-			"importpath": "github.com/gorilla/mux",
-			"repository": "https://github.com/gorilla/mux",
-			"revision": "26a6070f849969ba72b72256e9f14cf519751690",
-			"branch": "master"
-		},
-		{
-			"importpath": "github.com/gorilla/securecookie",
-			"repository": "https://github.com/gorilla/securecookie",
-			"revision": "e95799a481bbcc3d01c2ad5178524cb8bec9f370",
-			"branch": "master"
-		},
-		{
-			"importpath": "github.com/gorilla/sessions",
-			"repository": "https://github.com/gorilla/sessions",
-			"revision": "715060ac0b7d99d95d1600df329f5da94809023a",
-			"branch": "master"
-		},
-		{
-			"importpath": "github.com/mattn/go-sqlite3",
-			"repository": "https://github.com/mattn/go-sqlite3",
-			"revision": "c5aee9649735e8dadac55eb968ccebd9fa29a881",
-			"branch": "master"
-		},
-		{
 			"importpath": "golang.org/x/crypto/bcrypt",
 			"repository": "https://go.googlesource.com/crypto",
 			"revision": "1f22c0103821b9390939b6776727195525381532",

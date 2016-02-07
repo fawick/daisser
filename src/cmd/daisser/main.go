@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"database/sql"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -13,13 +12,9 @@ import (
 	"net/http/fcgi"
 	"os"
 	"path/filepath"
-	"strconv"
 	"sync"
 	"time"
 
-	"github.com/gorilla/mux"
-	"github.com/gorilla/sessions"
-	_ "github.com/mattn/go-sqlite3"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -35,8 +30,6 @@ var config struct {
 var cachedTemplates = map[string]*template.Template{}
 var cachedMutex sync.Mutex
 
-var store sessions.Store
-var db *sql.DB
 var startTime time.Time
 var logWriter io.Writer
 
@@ -55,7 +48,6 @@ func writeConfig() error {
 
 func readConfig() error {
 	config.UrlBase = ""
-	config.DbFile = "positions.db"
 	config.LocalMode = false
 	config.LocalPort = 8080
 	inFile, err := os.Open(configFile)
@@ -93,25 +85,6 @@ func init() {
 	}
 
 	startTime = time.Now()
-	db, err = sql.Open("sqlite3", config.DbFile)
-	if err != nil {
-		fmt.Fprintln(logWriter, err)
-		panic(err)
-	}
-	queries := []string{
-		"PRAGMA journal_mode = OFF",
-		"CREATE TABLE IF NOT EXISTS credentials(username TEXT PRIMARY KEY NOT NULL, password TEXT NOT NULL)",
-		"CREATE TABLE IF NOT EXISTS positions(ts DATETIME DEFAULT CURRENT_TIMESTAMP, person TEXT, lat REAL, lon REAL, alt REAL, speed REAL, hdop REAL)",
-	}
-	for _, query := range queries {
-		_, err = db.Exec(query)
-		if err != nil {
-			fmt.Fprintln(logWriter, err)
-			panic(err)
-		}
-	}
-
-	store = sessions.NewCookieStore([]byte("keykeykey"))
 }
 
 func T(name string) *template.Template {
@@ -128,61 +101,6 @@ func T(name string) *template.Template {
 	cachedTemplates[name] = t
 
 	return t
-}
-
-func NewPositionOsmand(w http.ResponseWriter, r *http.Request) {
-	err := r.ParseForm()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	var lat, lon, alt, hdop, speed float64
-	if d, ok := r.Form["lat"]; ok {
-		lat, err = strconv.ParseFloat(d[0], 64)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-	} else {
-		http.Error(w, "Required argument 'lat' not supplied", http.StatusBadRequest)
-		return
-	}
-	if d, ok := r.Form["lon"]; ok {
-		lon, err = strconv.ParseFloat(d[0], 64)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-	} else {
-		http.Error(w, "Required argument 'lon' not supplied", http.StatusBadRequest)
-		return
-	}
-	if d, ok := r.Form["altitude"]; ok {
-		alt, err = strconv.ParseFloat(d[0], 64)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-	}
-	if d, ok := r.Form["hdop"]; ok {
-		hdop, err = strconv.ParseFloat(d[0], 64)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-	}
-	if d, ok := r.Form["speed"]; ok {
-		speed, err = strconv.ParseFloat(d[0], 64)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-	}
-	if _, err := db.Exec("INSERT INTO positions(ts, person, lat, lon, alt, speed, hdop) VALUES(?,'fabian',?,?,?,?,?)", time.Now().Unix(), lat, lon, alt, speed, hdop); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	fmt.Fprintf(w, "ok")
 }
 
 func NotFound(w http.ResponseWriter, r *http.Request) {
@@ -218,32 +136,26 @@ type FeatureCollection struct {
 func GetAllPoints(w http.ResponseWriter, r *http.Request) {
 	var fc FeatureCollection
 	fc.Type = "FeatureCollection"
-	rows, err := db.Query("SELECT * FROM positions")
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
-	var lat, lon, alt, hdop, speed float64
-	var ts time.Time
-	var name string
-	for rows.Next() {
-		if err := rows.Scan(&ts, &name, &lat, &lon, &alt, &speed, &hdop); err != nil {
-			log.Fatal(err)
-		}
-		var f Feature
-		f.Type = "Feature"
-		f.Properties = make(map[string]string)
-		f.Properties["Time"] = ts.String()
-		f.Properties["User"] = name
-		f.Properties["Hdop"] = fmt.Sprint(hdop)
-		f.Geometry.Type = "Point"
-		f.Geometry.Coordinates = make([]float64, 2)
-		f.Geometry.Coordinates[0] = lon
-		f.Geometry.Coordinates[1] = lat
-		fc.Features = append(fc.Features, f)
-	}
-	if err := rows.Err(); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
+	// TODO iterate over positions
+	//var lat, lon, alt, hdop, speed float64
+	//var ts time.Time
+	//var name string
+	//for rows.Next() {
+	//if err := rows.Scan(&ts, &name, &lat, &lon, &alt, &speed, &hdop); err != nil {
+	//log.Fatal(err)
+	//}
+	//var f Feature
+	//f.Type = "Feature"
+	//f.Properties = make(map[string]string)
+	//f.Properties["Time"] = ts.String()
+	//f.Properties["User"] = name
+	//f.Properties["Hdop"] = fmt.Sprint(hdop)
+	//f.Geometry.Type = "Point"
+	//f.Geometry.Coordinates = make([]float64, 2)
+	//f.Geometry.Coordinates[0] = lon
+	//f.Geometry.Coordinates[1] = lat
+	//fc.Features = append(fc.Features, f)
+	//}
 	b, err := json.Marshal(fc)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -252,13 +164,8 @@ func GetAllPoints(w http.ResponseWriter, r *http.Request) {
 }
 
 func runTemplate(w http.ResponseWriter, r *http.Request, name string) {
-	sess, err := store.Get(r, "daissersession")
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
 	buf := new(bytes.Buffer)
-	T(name).Execute(buf, sess)
-	sess.Save(r, w)
+	T(name).Execute(buf, nil) // TODO add correct data here
 	buf.WriteTo(w)
 }
 
@@ -271,12 +178,7 @@ func serveMap(w http.ResponseWriter, r *http.Request) {
 }
 
 func postLogin(w http.ResponseWriter, r *http.Request) {
-	sess, err := store.Get(r, "daissersession")
-	if err != nil {
-		http.Error(w, "Server Error", http.StatusInternalServerError)
-		return
-	}
-	err = r.ParseForm()
+	err := r.ParseForm()
 	if err != nil {
 		http.Error(w, "Bad login request", 400)
 		return
@@ -284,57 +186,32 @@ func postLogin(w http.ResponseWriter, r *http.Request) {
 	username := r.FormValue("username")
 	password := r.FormValue("password")
 	var encryptedPassword string
+	_ = username
 
-	err = db.QueryRow("SELECT password FROM credentials WHERE username=?", username).Scan(&encryptedPassword)
-	log.Println(err)
+	// TODO check request
 
-	if err != nil && err != sql.ErrNoRows {
-		http.Error(w, "Server Error: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	log.Println(encryptedPassword, password)
+	log.Println("PASSWORD for testing: ", encryptedPassword, password)
 
 	err = bcrypt.CompareHashAndPassword([]byte(encryptedPassword), []byte(password))
 	if err == nil {
-		sess, err := store.New(r, "daissersession")
-		if err != nil {
-			http.Error(w, "Server Error", http.StatusInternalServerError)
-		}
-		sess.Values["user"] = username
-		sess.Save(r, w)
+		// TODO save cookie
 		http.Redirect(w, r, config.UrlBase+"/map", http.StatusSeeOther)
 	} else {
 		log.Println(err)
-		delete(sess.Values, "user")
-		sess.AddFlash("Invalid username/password")
-		sess.Save(r, w)
+		// TODO error
 		http.Redirect(w, r, config.UrlBase+"/", http.StatusSeeOther)
 	}
 }
 
 func postLogout(w http.ResponseWriter, r *http.Request) {
-	sess, err := store.Get(r, "daissersession")
-	if err != nil {
-		http.Error(w, "Server Error", http.StatusInternalServerError)
-	}
-	log.Println("Logging out", sess.Values["user"])
-	delete(sess.Values, "user")
-	sess.Save(r, w)
+	log.Println("Logging out")
+	// TODO delete cookie
 	http.Redirect(w, r, config.UrlBase+"/", http.StatusSeeOther)
 }
 
 func authCheck(exe func(http.ResponseWriter, *http.Request)) http.HandlerFunc {
+	// TODO check authentication
 	f := func(w http.ResponseWriter, r *http.Request) {
-		sess, err := store.Get(r, "daissersession")
-		if err != nil {
-			http.Error(w, "Server Error", http.StatusInternalServerError)
-		}
-		fmt.Println(sess)
-		if _, ok := sess.Values["user"]; !ok { // TODO handle case that user is not in DB
-			http.Redirect(w, r, config.UrlBase+"/", http.StatusSeeOther)
-			return
-		}
 		exe(w, r)
 	}
 	return f
@@ -347,39 +224,32 @@ func setPassword(username, password string) {
 	}
 	log.Println(string(hpass))
 
-	if _, err = db.Exec("REPLACE INTO credentials VALUES(?,?)", username, string(hpass)); err != nil {
-		log.Println("error during insert", err)
-		return
-	}
+	// TODO make password persistent
 }
 
 func main() {
-	var r *mux.Router
-	base := mux.NewRouter()
-	if config.UrlBase == "" {
-		r = base
-	} else {
-		r = base.PathPrefix(config.UrlBase).Subrouter()
+	var mux = http.DefaultServeMux
+	if config.UrlBase != "" {
+		// TODO STRIP PREFIXES
 	}
 
 	// default access
-	r.Path("/").HandlerFunc(serveLogin)
-	r.Path("/api/login").Methods("POST").HandlerFunc(postLogin)
-	r.Path("/api/insertOsmand").HandlerFunc(NewPositionOsmand)
-	r.PathPrefix("/static/default/").Handler(http.StripPrefix(config.UrlBase+"/static/default/", http.FileServer(http.Dir("static/default"))))
+	//r.Path("/").HandlerFunc(serveLogin)
+	//r.Path("/api/login").Methods("POST").HandlerFunc(postLogin)
+	//r.PathPrefix("/static/default/").Handler(http.StripPrefix(config.UrlBase+"/static/default/", http.FileServer(http.Dir("static/default"))))
 
-	r.Path("/map").HandlerFunc(authCheck(serveMap))
-	r.Path("/api/logout").HandlerFunc(authCheck(postLogout))
-	r.Path("/api/points").HandlerFunc(authCheck(GetAllPoints))
+	//r.Path("/map").HandlerFunc(authCheck(serveMap))
+	//r.Path("/api/logout").HandlerFunc(authCheck(postLogout))
+	//r.Path("/api/points").HandlerFunc(authCheck(GetAllPoints))
 
-	base.NotFoundHandler = http.HandlerFunc(NotFound)
+	//base.NotFoundHandler = http.HandlerFunc(NotFound)
 
 	var err error
 	if config.LocalMode {
 		s := fmt.Sprintf(":%d", config.LocalPort)
-		err = http.ListenAndServe(s, base)
+		err = http.ListenAndServe(s, mux)
 	} else {
-		err = fcgi.Serve(nil, base)
+		err = fcgi.Serve(nil, mux)
 	}
 	if err != nil {
 		fmt.Fprintln(logWriter, err)
