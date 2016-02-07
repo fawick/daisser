@@ -11,7 +11,9 @@ import (
 	"net/http"
 	"net/http/fcgi"
 	"os"
+	"owntracks"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
@@ -21,17 +23,19 @@ import (
 const configFile = "config.json"
 
 var config struct {
-	UrlBase   string
-	DbFile    string
-	LocalMode bool
-	LocalPort int
+	MQTTHost     string
+	MQTTPort     uint16
+	MQTTUser     string
+	MQTTPassword string
+	UrlBase      string
+	DbFile       string
+	Listen       string
 }
 
 var cachedTemplates = map[string]*template.Template{}
 var cachedMutex sync.Mutex
 
-var startTime time.Time
-var logWriter io.Writer
+var logger *log.Logger
 
 func writeConfig() error {
 	j, err := json.MarshalIndent(&config, "", "\t")
@@ -48,8 +52,7 @@ func writeConfig() error {
 
 func readConfig() error {
 	config.UrlBase = ""
-	config.LocalMode = false
-	config.LocalPort = 8080
+	config.Listen = "fastcgi"
 	inFile, err := os.Open(configFile)
 	if err != nil {
 		return writeConfig()
@@ -65,28 +68,32 @@ func readConfig() error {
 }
 
 func init() {
-	l, err := os.Create("daisser.log")
-	if err != nil {
-		panic(err)
-	}
-	logWriter = l
-
-	err = readConfig()
-	if err != nil {
-		fmt.Fprintln(logWriter, err)
-		panic(err)
-	}
-
-	localPortFlag := flag.Int("local", 0, "Listen on local port instead of using FastCGI")
+	listenFlag := flag.String("listen", "", "Where to listen, either 'fastcgi' or a http.Listen string (':8080')")
+	logFlag := flag.String("log", "daisser.log", "file to log to, or '-' for stderr")
 	flag.Parse()
-	if *localPortFlag != 0 {
-		config.LocalMode = true
-		config.LocalPort = *localPortFlag
+	var w io.Writer = os.Stderr
+	if *logFlag != "-" {
+		var err error
+		w, err = os.OpenFile("daisser.log", os.O_CREATE|os.O_RDWR|os.O_APPEND, 0644)
+		if err != nil {
+			panic(err)
+		}
+	}
+	logger = log.New(w, "", log.Ldate|log.Ltime|log.Lshortfile)
+
+	err := readConfig()
+	if err != nil {
+		logger.Println(err)
+		panic(err)
 	}
 
-	startTime = time.Now()
+	if *listenFlag != "" {
+		config.Listen = *listenFlag
+	}
 }
 
+// T returns a html/template. All compiled templates are cached.
+// The template must compile, otherwise this method will panic.
 func T(name string) *template.Template {
 	cachedMutex.Lock()
 	defer cachedMutex.Unlock()
@@ -103,22 +110,6 @@ func T(name string) *template.Template {
 	return t
 }
 
-func NotFound(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusNotFound)
-	fmt.Fprintln(w, "404 for ", r)
-	fmt.Fprintln(w, "Started at", startTime.String(), "\t Running for", time.Since(startTime))
-	pwd, _ := os.Getwd()
-	fmt.Fprintln(w, "cwd: ", pwd)
-	if _, err := os.Stat("killfile"); !os.IsNotExist(err) {
-		fmt.Fprintln(w, "Quitting now")
-		if f, ok := w.(http.Flusher); ok {
-			f.Flush()
-		}
-		os.Remove("killfile")
-		os.Exit(0)
-	}
-}
-
 type Feature struct {
 	Type       string            `json:"type"`
 	Properties map[string]string `json:"properties"`
@@ -133,29 +124,28 @@ type FeatureCollection struct {
 	Features []Feature `json:"features"`
 }
 
-func GetAllPoints(w http.ResponseWriter, r *http.Request) {
+func (s *Server) Positions(w http.ResponseWriter, r *http.Request) {
 	var fc FeatureCollection
 	fc.Type = "FeatureCollection"
-	// TODO iterate over positions
-	//var lat, lon, alt, hdop, speed float64
-	//var ts time.Time
-	//var name string
-	//for rows.Next() {
-	//if err := rows.Scan(&ts, &name, &lat, &lon, &alt, &speed, &hdop); err != nil {
-	//log.Fatal(err)
-	//}
-	//var f Feature
-	//f.Type = "Feature"
-	//f.Properties = make(map[string]string)
-	//f.Properties["Time"] = ts.String()
-	//f.Properties["User"] = name
-	//f.Properties["Hdop"] = fmt.Sprint(hdop)
-	//f.Geometry.Type = "Point"
-	//f.Geometry.Coordinates = make([]float64, 2)
-	//f.Geometry.Coordinates[0] = lon
-	//f.Geometry.Coordinates[1] = lat
-	//fc.Features = append(fc.Features, f)
-	//}
+	s.posMutex.RLock()
+	for _, v := range s.positions {
+		var f Feature
+		f.Type = "Feature"
+		f.Properties = make(map[string]string)
+		f.Properties["Time"] = v.T.String()
+		f.Properties["User"] = v.User
+		f.Properties["Client"] = v.ClientID
+		f.Properties["Tracker"] = v.TrackerID
+		f.Properties["Accuracy"] = strconv.Itoa(v.Accuracy)
+		f.Properties["Description"] = v.Description
+		f.Geometry.Type = "Point"
+		f.Geometry.Coordinates = make([]float64, 2)
+		f.Geometry.Coordinates[0] = v.Longitude
+		f.Geometry.Coordinates[1] = v.Latitude
+		fc.Features = append(fc.Features, f)
+	}
+	s.posMutex.RUnlock()
+	fmt.Println(fc)
 	b, err := json.Marshal(fc)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -163,6 +153,7 @@ func GetAllPoints(w http.ResponseWriter, r *http.Request) {
 	w.Write(b)
 }
 
+// runTemplate executes the template named name on w.
 func runTemplate(w http.ResponseWriter, r *http.Request, name string) {
 	buf := new(bytes.Buffer)
 	T(name).Execute(buf, nil) // TODO add correct data here
@@ -203,7 +194,7 @@ func postLogin(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func postLogout(w http.ResponseWriter, r *http.Request) {
+func logout(w http.ResponseWriter, r *http.Request) {
 	log.Println("Logging out")
 	// TODO delete cookie
 	http.Redirect(w, r, config.UrlBase+"/", http.StatusSeeOther)
@@ -227,31 +218,124 @@ func setPassword(username, password string) {
 	// TODO make password persistent
 }
 
-func main() {
-	var mux = http.DefaultServeMux
-	if config.UrlBase != "" {
-		// TODO STRIP PREFIXES
-	}
+type PositionSet map[string]owntracks.LocationUpdate
 
+// Server is the primary datastructure for daisser. Internally it combines a
+// HTTP server or FastCGI process with an Owntracks listener
+type Server struct {
+	mux       *http.ServeMux
+	done      chan struct{}
+	startTime time.Time
+	listener  owntracks.Listener
+	positions PositionSet
+	posMutex  sync.RWMutex
+}
+
+func (s *Server) NotFound(w http.ResponseWriter, r *http.Request) {
+	logger.Printf("404 Not found: %s %s", r.Method, r.URL.Path)
+	w.WriteHeader(http.StatusNotFound)
+	fmt.Fprintf(w, "404 Not Found (%s %s)\n", r.Method, r.URL.Path)
+	fmt.Fprintf(w, "Started at %s \t Running for %s", s.startTime.String(), time.Since(s.startTime))
+	pwd, _ := os.Getwd()
+	fmt.Fprintln(w, "cwd: ", pwd)
+}
+
+func (s *Server) DefaultHandle(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/" {
+		serveMap(w, r)
+	} else {
+		s.NotFound(w, r)
+	}
+	if _, err := os.Stat("killfile"); !os.IsNotExist(err) {
+		logger.Println("found fillfile, quitting now")
+		os.Remove("killfile")
+		close(s.done)
+	}
+}
+
+func (s *Server) Listen() error {
+	s.listener = owntracks.Listener{
+		Hostname: config.MQTTHost,
+		Port:     config.MQTTPort,
+		Username: config.MQTTUser,
+		Password: config.MQTTPassword,
+		UseTLS:   true,
+		ClientID: "daisser-server",
+	}
+	msgs, err := s.listener.Connect()
+	if err != nil {
+		return err
+	}
+	parser := owntracks.RunMessageParser(msgs, s.done)
+	logger.Printf("Connected to MQTT server at %s", s.listener.BrokerAddress())
+	go func() {
+		for {
+			select {
+			case <-s.done:
+			case l := <-parser.L:
+				fmt.Println(l)
+				s.addPositionUpdate(l)
+			case m := <-parser.O:
+				logger.Printf("Received other message: %s %s", m.Topic, m.Payload)
+			}
+		}
+		if err := s.listener.Disconnect(); err != nil {
+			logger.Printf("Error during owntracks.Listener.Disconnect: %v", err)
+		}
+	}()
+	return nil
+}
+
+func (s *Server) addPositionUpdate(lu owntracks.LocationUpdate) {
+	k := lu.User + lu.TrackerID
+	s.posMutex.Lock()
+	s.positions[k] = lu
+	defer s.posMutex.Unlock()
+}
+
+func RunServer(listen string) error {
+	s := &Server{
+		mux:       http.NewServeMux(),
+		done:      make(chan struct{}),
+		startTime: time.Now(),
+		positions: make(PositionSet),
+	}
 	// default access
+	s.mux.HandleFunc("/", s.DefaultHandle)
+	s.mux.HandleFunc("/api/positions", s.Positions)
+	s.mux.HandleFunc("/logout", logout)
+	s.mux.Handle("/assets/", http.FileServer(http.Dir("static")))
+
 	//r.Path("/").HandlerFunc(serveLogin)
 	//r.Path("/api/login").Methods("POST").HandlerFunc(postLogin)
 	//r.PathPrefix("/static/default/").Handler(http.StripPrefix(config.UrlBase+"/static/default/", http.FileServer(http.Dir("static/default"))))
 
-	//r.Path("/map").HandlerFunc(authCheck(serveMap))
-	//r.Path("/api/logout").HandlerFunc(authCheck(postLogout))
-	//r.Path("/api/points").HandlerFunc(authCheck(GetAllPoints))
-
 	//base.NotFoundHandler = http.HandlerFunc(NotFound)
 
-	var err error
-	if config.LocalMode {
-		s := fmt.Sprintf(":%d", config.LocalPort)
-		err = http.ListenAndServe(s, mux)
-	} else {
-		err = fcgi.Serve(nil, mux)
+	if err := s.Listen(); err != nil {
+		return err
 	}
-	if err != nil {
-		fmt.Fprintln(logWriter, err)
+
+	errc := make(chan error)
+	go func() error {
+		if listen != "fastcgi" {
+			return http.ListenAndServe(listen, s.mux)
+		} else {
+			return fcgi.Serve(nil, s.mux)
+		}
+	}()
+	select {
+	case <-s.done:
+		return nil
+	case err := <-errc:
+		return err
+	}
+}
+
+func main() {
+	logger.Println("Started")
+	defer logger.Println("Exited")
+	if err := RunServer(config.Listen); err != nil {
+		logger.Println(err)
 	}
 }

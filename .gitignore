@@ -24,4 +24,7 @@ tags
 
 # Project-specifics
 positions.db
-daisser
+pkg
+bin
+config.json
+daisser.log

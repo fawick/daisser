@@ -34,7 +34,7 @@ const (
 type locationMessage struct {
 	Type     string  `json:"_type"`
 	Lat      float64 `json:"lat"`  // WGS-84 latitude in degrees
-	Lon      float64 `json:"lat"`  // WGS-85 longitude in degrees
+	Lon      float64 `json:"lon"`  // WGS-85 longitude in degrees
 	Epoch    int64   `json:"tst"`  // epoch time
 	Accuracy int     `json:"acc"`  // in [m]
 	Battery  int     `json:"batt"` // in percent
