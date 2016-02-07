@@ -2,6 +2,12 @@
 	"version": 0,
 	"dependencies": [
 		{
+			"importpath": "github.com/pborman/uuid",
+			"repository": "https://github.com/pborman/uuid",
+			"revision": "dee7705ef7b324f27ceb85a121c61f2c2e8ce988",
+			"branch": "master"
+		},
+		{
 			"importpath": "golang.org/x/crypto/bcrypt",
 			"repository": "https://go.googlesource.com/crypto",
 			"revision": "1f22c0103821b9390939b6776727195525381532",
@@ -14,6 +20,13 @@
 			"revision": "1f22c0103821b9390939b6776727195525381532",
 			"branch": "master",
 			"path": "/blowfish"
+		},
+		{
+			"importpath": "golang.org/x/net/websocket",
+			"repository": "https://go.googlesource.com/net",
+			"revision": "7f88271ea9913b72aca44fa7fc8af919eacc17ce",
+			"branch": "master",
+			"path": "/websocket"
 		}
 	]
 }
