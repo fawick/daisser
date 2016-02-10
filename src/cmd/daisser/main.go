@@ -307,6 +307,13 @@ func RunServer(listen string) error {
 	s.mux.HandleFunc("/logout", logout)
 	s.mux.Handle("/assets/", http.FileServer(http.Dir("static")))
 
+	if config.UrlBase != "" {
+		strip := http.StripPrefix(config.UrlBase, s.mux)
+		m := http.NewServeMux()
+		m.Handle("/", strip)
+		s.mux = m
+	}
+
 	//r.Path("/").HandlerFunc(serveLogin)
 	//r.Path("/api/login").Methods("POST").HandlerFunc(postLogin)
 	//r.PathPrefix("/static/default/").Handler(http.StripPrefix(config.UrlBase+"/static/default/", http.FileServer(http.Dir("static/default"))))
