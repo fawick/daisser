@@ -233,11 +233,12 @@ type Server struct {
 
 func (s *Server) NotFound(w http.ResponseWriter, r *http.Request) {
 	logger.Printf("404 Not found: %s %s", r.Method, r.URL.Path)
+	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(http.StatusNotFound)
 	fmt.Fprintf(w, "404 Not Found (%s %s)\n", r.Method, r.URL.Path)
-	fmt.Fprintf(w, "Started at %s \t Running for %s", s.startTime.String(), time.Since(s.startTime))
+	fmt.Fprintf(w, "Started at %s\nRunning for %s\n", s.startTime.String(), time.Since(s.startTime))
 	pwd, _ := os.Getwd()
-	fmt.Fprintln(w, "cwd: ", pwd)
+	fmt.Fprintf(w, "cwd: %s\n", pwd)
 }
 
 func (s *Server) DefaultHandle(w http.ResponseWriter, r *http.Request) {
