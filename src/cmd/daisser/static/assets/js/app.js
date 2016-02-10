@@ -29,26 +29,9 @@ $("#legend-btn").click(function() {
   return false;
 });
 
-$("#list-btn").click(function() {
-  $('#sidebar').toggle();
-  map.invalidateSize();
-  return false;
-});
-
 $("#nav-btn").click(function() {
   $(".navbar-collapse").collapse("toggle");
   return false;
-});
-
-$("#sidebar-toggle-btn").click(function() {
-  $("#sidebar").toggle();
-  map.invalidateSize();
-  return false;
-});
-
-$("#sidebar-hide-btn").click(function() {
-  $('#sidebar').hide();
-  map.invalidateSize();
 });
 
 function sizeLayerControl() {
